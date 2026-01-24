@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+    <title>Finanzas Saul | Control Universitario</title>
+    <link rel="stylesheet" href="styles.css?v=2.1">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- sql.js scripts -->
+    <!-- Backend API Mode (No SQL.js) -->
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Mobile Menu Toggle -->
+        <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Abrir menú">
+            <span class="hamburger-icon"></span>
+        </button>
+        <div class="sidebar-overlay" id="sidebarOverlay"></div>
+        <aside class="sidebar">
+            <div class="logo">
+                <span class="logo-icon">₡</span>
+                <h1>SaulFinanzas</h1>
+            </div>
+            <nav>
+                <button class="nav-item active" data-view="dashboard">Dashboard</button>
+                <button class="nav-item" data-view="transacciones">Transacciones</button>
+                <button class="nav-item" data-view="ahorros">Ahorros</button>
+                <button class="nav-item" data-view="ajustes">Ajustes</button>
+            </nav>
+            <div class="save-indicator" id="saveStatus">Datos Guardados Localmente</div>
+            <button id="logoutBtn"
+                style="margin-top: 1rem; width: 100%; padding: 10px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; border-radius: 8px; cursor: pointer; font-weight: bold; transition: all 0.2s;">
+                Cerrar Sesión
+            </button>
+        </aside>
+
+        <main class="content">
+            <!-- Dashboard View -->
+            <section id="view-dashboard" class="view active">
+                <header class="header">
+                    <h2 id="userGreeting">Hola, Saul 👋</h2>
+                    <p id="dashboardDesc" style="margin-bottom: 0.5rem;"></p>
+                    <p><span id="currentDate">...</span></p>
+
+                    <div class="month-selector">
+                        <button id="prevMonth" class="month-nav" title="Mes Anterior">◀</button>
+                        <span id="currentMonthDisplay">Cargando...</span>
+                        <button id="nextMonth" class="month-nav" title="Mes Siguiente">▶</button>
+                    </div>
+                </header>
+
+                <div class="stats-grid">
+                    <div class="stat-card balance">
+                        <h3>Saldo Total</h3>
+                        <p class="amount" id="totalBalance">₡ 0.00</p>
+                    </div>
+                    <div class="stat-card income">
+                        <h3>Ingresos</h3>
+                        <p class="amount" id="totalIncome">₡ 0.00</p>
+                    </div>
+                    <div class="stat-card expenses">
+                        <h3>Gastos</h3>
+                        <p class="amount" id="totalExpenses">₡ 0.00</p>
+                    </div>
+                </div>
+
+                <div id="comparisonContainer" style="margin-bottom: 2rem;">
+                    <!-- Comparison Card injected here -->
+                </div>
+
+                <div id="budgetAlerts" class="alerts-container">
+                    <!-- Alerts injected here -->
+                </div>
+
+                <div class="dashboard-body">
+                    <div class="chart-container">
+                        <div class="chart-header">
+                            <h3 id="chartTitle">Distribución de Gastos</h3>
+                            <div class="chart-controls">
+                                <button class="icon-btn" id="refreshCharts" title="Refrescar gráficos">🔄</button>
+                                <button class="icon-btn" id="toggleChartType"
+                                    title="Cambiar tipo de gráfico">📊</button>
+                            </div>
+                        </div>
+                        <canvas id="expensesChart"></canvas>
+                    </div>
+                    <div class="budget-container">
+                        <h3 id="budgetTitle">Presupuesto Mensual</h3>
+                        <div class="budget-progress-bar">
+                            <div class="progress" id="budgetProgress"></div>
+                        </div>
+                        <p id="budgetText">0% de tu presupuesto usado</p>
+
+                        <div id="categoryBudgetsContainer" class="category-budgets-list" style="margin-top: 1.5rem;">
+                            <!-- Dinámico -->
+                        </div>
+
+                        <div class="action-section">
+                            <div class="btn-group-pill">
+                                <button class="btn btn-pill btn-income" id="addIncomeBtn">Ingreso</button>
+                                <div class="mini-chart-wrapper">
+                                    <canvas id="miniIncomeChart"></canvas>
+                                </div>
+                            </div>
+                            <div class="btn-group-pill">
+                                <button class="btn btn-pill btn-expense" id="addExpenseBtn">Gasto</button>
+                                <div class="mini-chart-wrapper">
+                                    <canvas id="miniExpenseChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Transactions View -->
+            <section id="view-transacciones" class="view">
+                <header class="header">
+                    <h2 id="transactionsTitle">Mis Movimientos</h2>
+                    <p id="transDesc"></p>
+                </header>
+
+                <div class="transaction-lists">
+                    <div class="list-section">
+                        <h3 id="incomeListTitle">Ingresos</h3>
+                        <div class="table-container">
+                            <table id="incomeTable">
+                                <thead>
+                                    <tr>
+                                        <th id="thDate">Fecha</th>
+                                        <th id="thDesc">Concepto</th>
+                                        <th id="thCat">Categoría</th>
+                                        <th id="thAmount">Monto</th>
+                                        <th id="thActions">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="list-section">
+                        <h3 id="expenseListTitle">Gastos</h3>
+                        <div class="table-container">
+                            <table id="expenseTable">
+                                <thead>
+                                    <tr>
+                                        <th>Fecha</th>
+                                        <th>Concepto</th>
+                                        <th>Categoría</th>
+                                        <th>Monto</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Ahorros View -->
+            <section id="view-ahorros" class="view">
+                <header class="header">
+                    <h2 id="savingsTitle">Mis Sobres de Ahorro</h2>
+                    <p id="savingsDesc">Organiza tu dinero en sobres personalizados.</p>
+                </header>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3 id="savingsTotalTitle">Ahorro Total Acumulado</h3>
+                        <p class="amount" id="savingsTotal">₡ 0</p>
+                    </div>
+                    <div class="stat-card"
+                        style="display: flex; align-items: center; justify-content: center; background: rgba(34, 197, 94, 0.1); border-color: var(--income); cursor: pointer;"
+                        onclick="openNewEnvelopeModal()">
+                        <h3 style="color: var(--income); margin: 0; font-size: 1.1rem;">+ Nuevo Sobre</h3>
+                    </div>
+                </div>
+
+                <div id="envelopesGrid" class="envelopes-grid">
+                    <!-- Cards will be injected here -->
+                </div>
+            </section>
+
+            <!-- Ajustes View -->
+            <section id="view-ajustes" class="view">
+                <header class="header">
+                    <h2 id="settingsTitle">Personalización</h2>
+                    <p id="settingsDesc">Ajusta el programa a tu gusto, Saul.</p>
+                </header>
+
+                <div class="settings-grid">
+                    <div class="settings-card">
+                        <h3 id="profileTitle">Perfil e Idioma</h3>
+                        <div class="form-group">
+                            <label id="lblUsername">Nombre de Usuario</label>
+                            <input type="text" id="setting-username" placeholder="Tu nombre">
+                        </div>
+                        <div class="form-group">
+                            <label id="lblLanguage">Idioma</label>
+                            <select id="setting-lang">
+                                <option value="es">Español</option>
+                                <option value="en">English</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" id="saveSettingsBtn">Guardar Cambios</button>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3 id="securityTitle">🔐 Seguridad</h3>
+                        <form id="changePasswordForm">
+                            <div class="form-group">
+                                <label>Contraseña Actual</label>
+                                <input type="password" id="currentPassword" placeholder="••••••••" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Nueva Contraseña</label>
+                                <input type="password" id="newPassword" placeholder="Min. 8 caracteres" required>
+                                <div id="passwordRequirements"
+                                    style="font-size: 0.8rem; margin-top: 0.5rem; color: var(--text-muted);">
+                                    <div id="req-length">❌ Mínimo 8 caracteres</div>
+                                    <div id="req-upper">❌ Una letra mayúscula</div>
+                                    <div id="req-number">❌ Un número</div>
+                                    <div id="req-symbol">❌ Un símbolo (!@#$%...)</div>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Confirmar Nueva Contraseña</label>
+                                <input type="password" id="confirmPassword" placeholder="Repetir contraseña" required>
+                                <div id="passwordMatch" style="font-size: 0.8rem; margin-top: 0.5rem;"></div>
+                            </div>
+                            <button type="submit" class="btn btn-primary" id="changePasswordBtn" disabled>Cambiar
+                                Contraseña</button>
+                            <div id="passwordChangeResult" style="margin-top: 0.5rem; font-size: 0.9rem;"></div>
+                        </form>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3 id="categoriesTitle">Gestión de Categorías</h3>
+                        <div class="tabs">
+                            <button class="tab-btn active" data-tab="cat-gastos">Gastos</button>
+                            <button class="tab-btn" data-tab="cat-ingresos">Ingresos</button>
+                        </div>
+                        <div class="tab-content active" id="cat-gastos">
+                            <ul class="cat-list" id="list-cat-gastos"></ul>
+                            <div class="add-cat">
+                                <input type="text" id="new-cat-gasto" placeholder="Nueva categoría">
+                                <button class="btn-sm" onclick="addCategory('gasto')">+</button>
+                            </div>
+                        </div>
+                        <div class="tab-content" id="cat-ingresos">
+                            <ul class="cat-list" id="list-cat-ingresos"></ul>
+                            <div class="add-cat">
+                                <input type="text" id="new-cat-ingreso" placeholder="Nueva categoría">
+                                <button class="btn-sm" onclick="addCategory('ingreso')">+</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3 id="themeTitle">Color de Acento</h3>
+                        <div class="color-picker-grid">
+                            <button class="color-dot" style="background: #6366f1;" data-color="#6366f1"></button>
+                            <button class="color-dot" style="background: #ef4444;" data-color="#ef4444"></button>
+                            <button class="color-dot" style="background: #22c55e;" data-color="#22c55e"></button>
+                            <button class="color-dot" style="background: #f59e0b;" data-color="#f59e0b"></button>
+                            <button class="color-dot" style="background: #ec4899;" data-color="#ec4899"></button>
+                            <button class="color-dot" style="background: #06b6d4;" data-color="#06b6d4"></button>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3 id="dataTitle">Datos</h3>
+                        <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 1rem;">
+                            Descarga una copia de tu base de datos SQLite para respaldo.
+                        </p>
+                        <button class="btn btn-secondary" id="exportBtn">Exportar Base de Datos (.sqlite)</button>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3 id="messagesTitle">Mensajes de las Secciones</h3>
+                        <div class="form-group">
+                            <label>Mensaje Dashboard</label>
+                            <input type="text" id="setting-desc-dashboard" placeholder="Subtítulo personalizado">
+                        </div>
+                        <div class="form-group">
+                            <label>Mensaje Transacciones</label>
+                            <input type="text" id="setting-desc-trans" placeholder="Subtítulo personalizado">
+                        </div>
+                        <div class="form-group">
+                            <label>Mensaje Ahorros</label>
+                            <input type="text" id="setting-desc-ahorros" placeholder="Subtítulo personalizado">
+                        </div>
+                        <div class="form-group">
+                            <label>Mensaje Ajustes</label>
+                            <input type="text" id="setting-desc-ajustes" placeholder="Subtítulo personalizado">
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3 id="categoryBudgetsTitle">Presupuestos por Categoría</h3>
+                        <p class="text-muted" style="margin-bottom: 1rem; font-size: 0.9rem;">Define cuánto planeas
+                            gastar en cada categoría.</p>
+                        <div id="categoryBudgetFields" class="category-budget-fields">
+                            <!-- Se poblará dinámicamente -->
+                        </div>
+                        <button class="btn btn-primary" id="saveCatBudgetsBtn" style="margin-top: 1rem;">Guardar
+                            Presupuestos</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modal for new Transaction -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h3 id="modalTitle">Nuevo Movimiento</h3>
+            <form id="transactionForm">
+                <input type="hidden" id="type">
+                <input type="hidden" id="editingId">
+                <div class="form-group">
+                    <label id="lblCategory">Categoría</label>
+                    <select id="category" required></select>
+                </div>
+                <div class="form-group">
+                    <label id="lblAmount">Monto (₡)</label>
+                    <input type="number" id="amount" placeholder="0.00" required>
+                </div>
+                <div class="form-group">
+                    <label id="lblDescription">Descripción</label>
+                    <input type="text" id="description" placeholder="..." required>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="closeModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary" id="btnSave">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Custom Confirm Modal -->
+    <div id="confirmModal" class="modal">
+        <div class="modal-content" style="max-width: 400px; text-align: center;">
+            <h3 id="confirmTitle">¿Eliminar?</h3>
+            <p id="confirmMessage" style="margin: 1rem 0; color: var(--text-muted);">¿Estás seguro de que quieres
+                realizar esta acción?</p>
+            <div class="modal-footer" style="justify-content: center; gap: 1rem;">
+                <button type="button" class="btn btn-secondary" id="confirmCancel">Cancelar</button>
+                <button type="button" class="btn btn-danger" id="confirmOk">Eliminar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Envelope Modal -->
+    <div id="envelopeModal" class="modal">
+        <div class="modal-content">
+            <h3>Nuevo Sobre</h3>
+            <div class="form-group">
+                <label>Nombre del Sobre</label>
+                <input type="text" id="envelopeName" placeholder="Ej: Vacaciones">
+            </div>
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin: 0.5rem 0;">
+                💡 El sobre se crea con saldo ₡0. Usa "Depositar" para agregar fondos desde tu balance disponible.
+            </p>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeEnvelopeModal()">Cancelar</button>
+                <button class="btn btn-primary" onclick="createEnvelope()">Crear Sobre</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manage Funds Modal -->
+    <div id="fundsModal" class="modal">
+        <div class="modal-content">
+            <h3 id="fundsTitle">Gestionar Fondos</h3>
+            <input type="hidden" id="fundsEnvelopeId">
+
+            <div class="tabs" style="justify-content: center; margin-bottom: 1.5rem;">
+                <button class="tab-btn active" id="tabDeposit" onclick="setFundMode('deposit')">Ingresar (+)</button>
+                <button class="tab-btn" id="tabWithdraw" onclick="setFundMode('withdraw')">Retirar (-)</button>
+            </div>
+
+            <div class="form-group">
+                <label>Monto</label>
+                <input type="number" id="fundsAmount" placeholder="0">
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeFundsModal()">Cancelar</button>
+                <button class="btn btn-primary" onclick="processFundUpdate()">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications Container -->
+    <div id="toast-container"></div>
+
+    <script src="app.js?v=2.5"></script>
+</body>
+
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "saul-finanzas",
+  "version": "1.0.0",
+  "description": "Sistema de gestión financiera personal",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie": "^0.6.0",
+    "sqlite3": "^5.1.7"
+  }
+}
