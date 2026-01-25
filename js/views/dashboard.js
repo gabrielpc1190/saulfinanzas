@@ -16,23 +16,30 @@ export async function loadDashboard(getMonthFilter) {
 }
 
 async function updateStats(getMonthFilter) {
-    const txs = await API.get('transactions');
+    const [globalStats, txs] = await Promise.all([
+        API.get('stats'),
+        API.get('transactions')
+    ]);
+
     const monthFilter = getMonthFilter();
     const filtered = txs.filter(t => t.fecha && t.fecha.startsWith(monthFilter));
 
-    let income = 0, expense = 0;
+    let monthlyIncome = 0, monthlyExpense = 0;
     filtered.forEach(t => {
-        if (t.tipo === 'ingreso') income += t.monto;
-        if (t.tipo === 'gasto') expense += t.monto;
+        if (t.tipo === 'ingreso') monthlyIncome += t.monto;
+        if (t.tipo === 'gasto') monthlyExpense += t.monto;
     });
 
     const totalIncome = document.getElementById('totalIncome');
     const totalExpenses = document.getElementById('totalExpenses');
     const totalBalance = document.getElementById('totalBalance');
 
-    if (totalIncome) totalIncome.textContent = formatCurrency(income);
-    if (totalExpenses) totalExpenses.textContent = formatCurrency(expense);
-    if (totalBalance) totalBalance.textContent = formatCurrency(income - expense);
+    // Mensuales
+    if (totalIncome) totalIncome.textContent = formatCurrency(monthlyIncome);
+    if (totalExpenses) totalExpenses.textContent = formatCurrency(monthlyExpense);
+
+    // Global (Arrastre histórico)
+    if (totalBalance) totalBalance.textContent = formatCurrency(globalStats.balance);
 }
 
 async function updateCharts(getMonthFilter) {
