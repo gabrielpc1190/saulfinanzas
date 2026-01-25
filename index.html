@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
     <title>Finanzas Saul | Control Universitario</title>
-    <link rel="stylesheet" href="styles.css?v=2.1">
+    <link rel="stylesheet" href="styles.css?v=4.0">
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
     <!-- sql.js scripts -->
@@ -319,27 +319,31 @@
     </div>
 
     <!-- Modal for new Transaction -->
-    <div id="modal" class="modal">
+    <div id="transactionModal" class="modal">
         <div class="modal-content">
             <h3 id="modalTitle">Nuevo Movimiento</h3>
             <form id="transactionForm">
-                <input type="hidden" id="type">
+                <input type="hidden" id="transType">
                 <input type="hidden" id="editingId">
                 <div class="form-group">
+                    <label>Fecha</label>
+                    <input type="date" id="transDate" required>
+                </div>
+                <div class="form-group">
                     <label id="lblCategory">Categoría</label>
-                    <select id="category" required></select>
+                    <select id="transCategory" required></select>
                 </div>
                 <div class="form-group">
                     <label id="lblAmount">Monto (₡)</label>
-                    <input type="number" id="amount" placeholder="0.00" required>
+                    <input type="number" id="transAmount" placeholder="0.00" required>
                 </div>
                 <div class="form-group">
                     <label id="lblDescription">Descripción</label>
-                    <input type="text" id="description" placeholder="..." required>
+                    <input type="text" id="transDesc" placeholder="..." required>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" id="closeModal">Cancelar</button>
-                    <button type="submit" class="btn btn-primary" id="btnSave">Guardar</button>
+                    <button type="button" class="btn btn-primary" id="btnSave">Guardar</button>
                 </div>
             </form>
         </div>
@@ -402,7 +406,7 @@
     <!-- Toast Notifications Container -->
     <div id="toast-container"></div>
 
-    <script src="app.js?v=2.5"></script>
+    <script src="app.js?v=10.0"></script>
 </body>
 
 </html>

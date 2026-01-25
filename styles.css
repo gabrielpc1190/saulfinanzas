@@ -8,6 +8,8 @@
     --text-muted: #94a3b8;
     --income: #22c55e;
     --expense: #ef4444;
+    --warning: #facc15;
+    --danger: #ef4444;
     --border: rgba(255, 255, 255, 0.1);
 }
 

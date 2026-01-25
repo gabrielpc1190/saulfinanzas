@@ -8,7 +8,16 @@ let currentViewYear = new Date().getFullYear();
 let currentViewMonth = new Date().getMonth();
 
 // --- API CLIENT ---
+// --- API CLIENT ---
+/**
+ * Cliente HTTP centralizado para interactuar con el backend.
+ * Maneja headers, serialización JSON y normalización de errores.
+ */
 const API = {
+    /**
+     * Realiza una petición GET.
+     * @param {string} endpoint - Ruta relativa (ej: 'transactions')
+     */
     async get(endpoint) {
         const res = await fetch(`/api/${endpoint}`);
         if (!res.ok) throw new Error(`API Error: ${res.statusText}`);
@@ -48,6 +57,10 @@ const API = {
 // --- INIT ---
 document.addEventListener('DOMContentLoaded', initApp);
 
+/**
+ * Inicialización principal de la aplicación.
+ * Verifica autenticación, carga datos iniciales y configura handlers globales.
+ */
 async function initApp() {
     try {
         const user = await API.get('me');
@@ -60,6 +73,8 @@ async function initApp() {
         initMobileMenu();
         initModalHandlers();
         initNavigation();
+        initMonthNavigation();
+        initTheme();
     } catch (err) {
         console.error('Auth failed:', err);
         window.location.href = '/login.html';
@@ -76,6 +91,10 @@ function initNavigation() {
     });
 }
 
+/**
+ * Cambia la vista activa de la SPA.
+ * @param {string} viewName - ID de la vista (ej: 'dashboard', 'transacciones')
+ */
 function showView(viewName) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -93,6 +112,7 @@ function showView(viewName) {
     if (viewName === 'dashboard') loadDashboard();
     if (viewName === 'transacciones') loadTransactionsView();
     if (viewName === 'ahorros') loadSavingsView();
+    if (viewName === 'ajustes') loadCategoriesSettings();
 }
 
 // --- DASHBOARD ---
@@ -100,7 +120,8 @@ async function loadDashboard() {
     try {
         await Promise.all([
             updateStats(),
-            updateCharts()
+            updateCharts(),
+            updateBudgetDisplay()
         ]);
     } catch (err) {
         console.error('Error loading dashboard:', err);
@@ -125,6 +146,112 @@ async function updateStats() {
     if (totalIncome) totalIncome.textContent = formatCurrency(income);
     if (totalExpenses) totalExpenses.textContent = formatCurrency(expense);
     if (totalBalance) totalBalance.textContent = formatCurrency(income - expense);
+}
+
+async function updateBudgetDisplay() {
+    try {
+        const [budgets, txs] = await Promise.all([
+            API.get('category-budgets'),
+            API.get('transactions')
+        ]);
+
+        const monthFilter = getMonthFilter();
+        const currentMonthExpenses = txs.filter(t =>
+            t.tipo === 'gasto' &&
+            t.fecha &&
+            t.fecha.startsWith(monthFilter) &&
+            t.categoria !== 'Ahorro'
+        );
+
+        // Mapa de gastos por categoría
+        const expenseMap = {};
+        let totalExpense = 0;
+        currentMonthExpenses.forEach(t => {
+            expenseMap[t.categoria] = (expenseMap[t.categoria] || 0) + t.monto;
+            totalExpense += t.monto;
+        });
+
+        // Mapa de presupuestos
+        let totalBudget = 0;
+        const budgetMap = {};
+        budgets.forEach(b => {
+            budgetMap[b.categoria] = b.limite;
+            totalBudget += b.limite;
+        });
+
+        // Actualizar barra general
+        const budgetProgress = document.getElementById('budgetProgress');
+        const budgetText = document.getElementById('budgetText');
+
+        if (budgetProgress && budgetText) {
+            let percent = 0;
+            if (totalBudget > 0) {
+                percent = (totalExpense / totalBudget) * 100;
+            } else if (totalExpense > 0) {
+                percent = 100; // Gasto sin presupuesto = 100% visual
+            }
+
+            let color;
+            if (totalBudget === 0 && totalExpense > 0) color = 'var(--danger)'; // Rojo directo
+            else if (percent > 100) color = 'var(--danger)';
+            else if (percent >= 100) color = 'var(--warning)';
+            else color = '#22c55e';
+
+            budgetProgress.style.width = `${Math.min(percent, 100)}%`;
+            budgetProgress.style.background = color;
+
+            budgetText.innerHTML = `
+                <span>${percent.toFixed(0)}% usado</span>
+                <span style="float:right">${formatCurrency(totalExpense)} / ${formatCurrency(totalBudget)}</span>
+            `;
+        }
+
+        // Actualizar lista de categorías
+        const container = document.getElementById('categoryBudgetsContainer');
+        if (container) {
+            container.innerHTML = '';
+            // Obtener todas las categorías únicas (del presupuesto O de los gastos)
+            const allCategories = new Set([...budgets.map(b => b.categoria), ...Object.keys(expenseMap)]);
+
+            allCategories.forEach(cat => {
+                const b = budgets.find(b => b.categoria === cat) || { limite: 0 };
+                const spent = expenseMap[cat] || 0;
+
+                // Solo mostrar si hay presupuesto O gasto
+                if (b.limite > 0 || spent > 0) {
+                    let pct = 0;
+                    if (b.limite > 0) pct = (spent / b.limite) * 100;
+                    else if (spent > 0) pct = 100; // Gasto sin límite
+
+                    let color;
+                    if (b.limite === 0 && spent > 0) color = 'var(--danger)';
+                    else if (pct > 100) color = 'var(--danger)';
+                    else if (pct >= 100) color = 'var(--warning)';
+                    else color = '#22c55e';
+
+                    const item = document.createElement('div');
+                    item.className = 'category-budget-item';
+                    item.innerHTML = `
+                        <div class="cat-budget-info">
+                            <span>${cat}</span>
+                            <span>${formatCurrency(spent)} / ${formatCurrency(b.limite)}</span>
+                        </div>
+                        <div class="cat-budget-bar">
+                            <div class="progress" style="width: ${Math.min(pct, 100)}%; background: ${color}"></div>
+                        </div>
+                    `;
+                    container.appendChild(item);
+                }
+            });
+
+            if (budgets.length === 0) {
+                container.innerHTML = '<p class="text-muted text-center" style="font-size:0.9rem;">No tienes presupuestos configurados.</p>';
+            }
+        }
+
+    } catch (err) {
+        console.error('Error updating budget display:', err);
+    }
 }
 
 // --- TRANSACTIONS VIEW ---
@@ -231,6 +358,13 @@ async function loadSavingsView() {
 }
 
 // --- CONFIRMATION MODAL HELPER ---
+/**
+ * Muestra el modal de confirmación personalizado.
+ * Reemplaza los botones para evitar event listeners duplicados.
+ * @param {string} title - Título del modal
+ * @param {string} message - Mensaje descriptivo
+ * @param {Function} onConfirm - Callback a ejecutar si se confirma
+ */
 function showConfirm(title, message, onConfirm) {
     const modal = document.getElementById('confirmModal');
     const titleEl = document.getElementById('confirmTitle');
@@ -258,15 +392,16 @@ function showConfirm(title, message, onConfirm) {
     modal.style.display = 'block';
 }
 
-function deleteEnvelope(id) {
-    try {
-        await API.delete(`savings/${id}`);
-        await loadSavingsView();
-        showToast('Sobre eliminado', 'success');
-    } catch (err) {
-        showToast(err.message, 'error');
-    }
-});
+async function deleteEnvelope(id) {
+    showConfirm('Eliminar Sobre', '¿Deseas eliminar este sobre?', async () => {
+        try {
+            await API.delete(`savings/${id}`);
+            await loadSavingsView();
+            showToast('Sobre eliminado', 'success');
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    });
 }
 
 function deleteTransaction(id) {
@@ -404,6 +539,11 @@ function closeModal() {
 }
 
 // --- HELPERS ---
+/**
+ * Muestra una notificación tipo Toast (burbuja flotante).
+ * @param {string} message - Texto a mostrar
+ * @param {'success'|'error'|'warning'|'info'} type - Tipo de alerta
+ */
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
     if (!container) return;
@@ -488,10 +628,10 @@ function initMobileMenu() {
 }
 
 function initModalHandlers() {
-    document.getElementById('openIncomeBtn').onclick = () => startAddTransaction('ingreso');
-    document.getElementById('openExpenseBtn').onclick = () => startAddTransaction('gasto');
-    document.getElementById('saveTransBtn').onclick = saveTransaction;
-    document.getElementById('cancelTransBtn').onclick = closeModal;
+    document.getElementById('addIncomeBtn').onclick = () => startAddTransaction('ingreso');
+    document.getElementById('addExpenseBtn').onclick = () => startAddTransaction('gasto');
+    document.getElementById('btnSave').onclick = saveTransaction;
+    document.getElementById('closeModal').onclick = closeModal;
 
     document.querySelectorAll('.modal').forEach(modal => {
         if (modal.id === 'confirmModal') return;
@@ -534,4 +674,191 @@ async function updateCharts() {
             options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: '#9ca3af' } } } }
         });
     } catch (err) { console.error(err); }
+}
+
+// --- SETTINGS & CATEGORIES ---
+async function loadCategoriesSettings() {
+    try {
+        const cats = await API.get('categories');
+        const listGasto = document.getElementById('list-cat-gastos');
+        const listIngreso = document.getElementById('list-cat-ingresos');
+
+        if (listGasto) listGasto.innerHTML = '';
+        if (listIngreso) listIngreso.innerHTML = '';
+
+        cats.forEach(c => {
+            const li = document.createElement('li');
+            li.innerHTML = `
+                <span>${c.nombre}</span>
+                <button class="btn-delete-cat" onclick="deleteCategory(${c.id})">✕</button>
+            `;
+            if (c.tipo === 'gasto' && listGasto) listGasto.appendChild(li);
+            if (c.tipo === 'ingreso' && listIngreso) listIngreso.appendChild(li);
+        });
+
+        // Init tabs logic if not already done
+        document.querySelectorAll('.settings-card .tab-btn').forEach(btn => {
+            btn.onclick = () => {
+                document.querySelectorAll('.settings-card .tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.settings-card .tab-content').forEach(c => c.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(btn.dataset.tab).classList.add('active');
+            };
+        });
+
+        // Cargar también los presupuestos por categoría
+        await loadCategoryBudgets();
+
+    } catch (err) { console.error(err); }
+}
+
+async function addCategory(type) {
+    const inputId = type === 'gasto' ? 'new-cat-gasto' : 'new-cat-ingreso';
+    const input = document.getElementById(inputId);
+    const nombre = input?.value?.trim();
+
+    if (!nombre) return showToast('Escribe un nombre', 'warning');
+
+    try {
+        await API.post('categories', { nombre, tipo: type });
+        input.value = '';
+        await loadCategoriesSettings();
+        showToast('Categoría agregada', 'success');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function deleteCategory(id) {
+    if (!confirm('¿Borrar esta categoría?')) return;
+    try {
+        await API.delete(`categories/${id}`);
+        await loadCategoriesSettings();
+        showToast('Categoría eliminada', 'success');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// --- CATEGORY BUDGETS ---
+async function loadCategoryBudgets() {
+    try {
+        const cats = await API.get('categories');
+        const budgets = await API.get('category-budgets');
+        const container = document.getElementById('categoryBudgetFields');
+
+        if (!container) return;
+        container.innerHTML = '';
+
+        // Solo categorías de gasto
+        const gastoCats = cats.filter(c => c.tipo === 'gasto');
+
+        // Crear mapa de presupuestos
+        const budgetMap = {};
+        budgets.forEach(b => { budgetMap[b.categoria] = b.limite; });
+
+        gastoCats.forEach(cat => {
+            const row = document.createElement('div');
+            row.className = 'cat-budget-row';
+            row.innerHTML = `
+                <span>${cat.nombre}</span>
+                <input type="number" 
+                       data-categoria="${cat.nombre}" 
+                       value="${budgetMap[cat.nombre] || 0}" 
+                       min="0" 
+                       placeholder="0">
+            `;
+            container.appendChild(row);
+        });
+
+        // Asignar evento al botón guardar
+        const saveBtn = document.getElementById('saveCatBudgetsBtn');
+        if (saveBtn) {
+            saveBtn.onclick = saveCategoryBudgets;
+        }
+    } catch (err) {
+        console.error('Error loading category budgets:', err);
+    }
+}
+
+async function saveCategoryBudgets() {
+    try {
+        const container = document.getElementById('categoryBudgetFields');
+        if (!container) return;
+
+        const inputs = container.querySelectorAll('input[data-categoria]');
+        const budgets = [];
+
+        inputs.forEach(input => {
+            budgets.push({
+                categoria: input.dataset.categoria,
+                limite: parseFloat(input.value) || 0
+            });
+        });
+
+        await API.post('category-budgets', budgets);
+        showToast('Presupuestos guardados', 'success');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// --- THEMES ---
+const THEME_COLORS = {
+    '#6366f1': '#4f46e5', // Indigo
+    '#ef4444': '#dc2626', // Red
+    '#22c55e': '#16a34a', // Green
+    '#f59e0b': '#d97706', // Amber
+    '#ec4899': '#db2777', // Pink
+    '#06b6d4': '#0891b2'  // Cyan
+};
+
+function initTheme() {
+    const savedColor = localStorage.getItem('theme_color');
+    if (savedColor && THEME_COLORS[savedColor]) {
+        applyTheme(savedColor);
+    }
+
+    document.querySelectorAll('.color-dot').forEach(dot => {
+        dot.addEventListener('click', () => {
+            const color = dot.dataset.color;
+            applyTheme(color);
+            localStorage.setItem('theme_color', color);
+            showToast('Tema actualizado', 'success');
+        });
+    });
+}
+
+function applyTheme(color) {
+    if (!THEME_COLORS[color]) return;
+    document.documentElement.style.setProperty('--primary', color);
+    document.documentElement.style.setProperty('--primary-hover', THEME_COLORS[color]);
+
+    // Update active dot UI
+    document.querySelectorAll('.color-dot').forEach(d => d.classList.remove('active'));
+    document.querySelector(`.color-dot[data-color="${color}"]`)?.classList.add('active');
+}
+
+// Agregar initTheme al inicio
+document.addEventListener('DOMContentLoaded', () => {
+    // ...existing init logic...
+    initTheme();
+});
+
+// --- MONTH NAVIGATION ---
+function initMonthNavigation() {
+    const prevBtn = document.getElementById('prevMonth');
+    const nextBtn = document.getElementById('nextMonth');
+
+    if (prevBtn) {
+        prevBtn.onclick = () => {
+            prevMonth();
+        };
+    }
+
+    if (nextBtn) {
+        nextBtn.onclick = () => {
+            nextMonth();
+        };
+    }
 }

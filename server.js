@@ -21,6 +21,11 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 // --- Inicializar DB SQLite ---
 const db = new sqlite3.Database(DB_FILE);
 
+/**
+ * Inicializa la estructura de la base de datos SQLite si no existe.
+ * Crea tablas: transacciones, configuracion, categorias, presupuestos_categoria, sobres.
+ * Inserta datos semilla si la tabla de categorías está vacía.
+ */
 function initDB() {
     db.serialize(() => {
         db.run(`CREATE TABLE IF NOT EXISTS transacciones (
@@ -61,6 +66,11 @@ if (fs.existsSync(SESSIONS_FILE)) sessions = JSON.parse(fs.readFileSync(SESSIONS
 
 function saveSessions() { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2)); }
 
+/**
+ * Recupera la sesión activa basada en la cookie 'auth_token'.
+ * @param {http.IncomingMessage} req - Objeto de petición HTTP.
+ * @returns {Object|null} Objeto de sesión { username, created } o null si no es válida.
+ */
 function getSession(req) {
     const cookies = cookie.parse(req.headers.cookie || '');
     const token = cookies.auth_token;
@@ -70,6 +80,11 @@ function getSession(req) {
 // --- Helpers ---
 const MIME_TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' };
 
+/**
+ * Helper para parsear el cuerpo de una petición como JSON.
+ * @param {http.IncomingMessage} req 
+ * @returns {Promise<Object>} Promesa que resuelve con el objeto parseado o vacío.
+ */
 function parseJSON(req) {
     return new Promise(resolve => {
         let body = '';
@@ -155,13 +170,63 @@ const server = http.createServer(async (req, res) => {
         }
 
         // --- CATEGORIES ---
+        // --- CATEGORIES ---
         if (url === '/api/categories') {
-            db.all("SELECT * FROM categorias ORDER BY nombre", (err, rows) => {
+            if (method === 'GET') {
+                db.all("SELECT * FROM categorias ORDER BY nombre", (err, rows) => {
+                    if (err) return sendJSON(res, { error: err.message }, 500);
+                    sendJSON(res, rows);
+                });
+                return;
+            }
+            if (method === 'POST') {
+                const data = await parseJSON(req);
+                if (!data.nombre || !data.tipo) return sendJSON(res, { error: 'Datos incompletos' }, 400);
+                db.run("INSERT INTO categorias (nombre, tipo) VALUES (?, ?)", [data.nombre, data.tipo], function (err) {
+                    if (err) return sendJSON(res, { error: err.message }, 500);
+                    sendJSON(res, { id: this.lastID, success: true });
+                });
+                return;
+            }
+        }
+
+        if (url.startsWith('/api/categories/') && method === 'DELETE') {
+            const id = url.split('/').pop();
+            db.run("DELETE FROM categorias WHERE id = ?", [id], function (err) {
                 if (err) return sendJSON(res, { error: err.message }, 500);
-                sendJSON(res, rows);
+                sendJSON(res, { success: true });
             });
             return;
         }
+
+
+        // --- CATEGORY BUDGETS ---
+        if (url === '/api/category-budgets') {
+            if (method === 'GET') {
+                db.all("SELECT * FROM presupuestos_categoria", (err, rows) => {
+                    if (err) return sendJSON(res, { error: err.message }, 500);
+                    sendJSON(res, rows || []);
+                });
+                return;
+            }
+            if (method === 'POST') {
+                const data = await parseJSON(req);
+                if (!Array.isArray(data)) return sendJSON(res, { error: 'Se espera un array' }, 400);
+
+                const stmt = db.prepare("INSERT OR REPLACE INTO presupuestos_categoria (categoria, limite) VALUES (?, ?)");
+                for (const item of data) {
+                    if (item.categoria && typeof item.limite === 'number') {
+                        stmt.run([item.categoria, item.limite]);
+                    }
+                }
+                stmt.finalize((err) => {
+                    if (err) return sendJSON(res, { error: err.message }, 500);
+                    sendJSON(res, { success: true });
+                });
+                return;
+            }
+        }
+
 
         // --- SAVINGS (SOBRES) ---
         if (url === '/api/savings') {
@@ -224,7 +289,7 @@ const server = http.createServer(async (req, res) => {
                 db.get("SELECT SUM(CASE WHEN tipo = 'ingreso' THEN monto WHEN tipo = 'gasto' THEN -monto ELSE 0 END) as total FROM transacciones", (err, row) => {
                     if (err) return sendJSON(res, { error: err.message }, 500);
 
-                    const balanceGeneral = row ? row.total : 0;
+                    const balanceGeneral = (row && row.total) || 0;
                     if (balanceGeneral < monto) {
                         return sendJSON(res, { error: `Fondos insuficientes. Disponible: ₡${balanceGeneral.toLocaleString('es-CR')}` }, 400);
                     }
@@ -303,12 +368,26 @@ const server = http.createServer(async (req, res) => {
     fs.readFile(realPath, (err, content) => {
         if (err) return (res.writeHead(404), res.end('Not Found'));
         const ext = path.extname(realPath);
-        res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
+        const headers = { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' };
+
+        // Evitar caché agresivo en archivos JS y CSS
+        if (ext === '.js' || ext === '.css') {
+            headers['Cache-Control'] = 'no-cache, must-revalidate';
+        }
+
+        res.writeHead(200, headers);
         res.end(content);
     });
 });
 
 // --- Handlers Auth ---
+
+/**
+ * Maneja el inicio de sesión de usuarios.
+ * Verifica credenciales contra hash bcrypt y emite cookie httpOnly.
+ * @param {http.IncomingMessage} req 
+ * @param {http.ServerResponse} res 
+ */
 async function handleLogin(req, res) {
     const { username, password } = await parseJSON(req);
     const user = users[username];
@@ -323,6 +402,11 @@ async function handleLogin(req, res) {
     }
 }
 
+/**
+ * Cierra la sesión activa y elimina la cookie de autenticación.
+ * @param {http.IncomingMessage} req 
+ * @param {http.ServerResponse} res 
+ */
 function handleLogout(req, res) {
     const cookies = cookie.parse(req.headers.cookie || '');
     if (cookies.auth_token) {
