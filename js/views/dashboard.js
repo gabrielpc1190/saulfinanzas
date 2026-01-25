@@ -16,10 +16,12 @@ export async function loadDashboard(getMonthFilter) {
 }
 
 async function updateStats(getMonthFilter) {
+    console.log('[DEBUG] updateStats triggered');
     const [globalStats, txs] = await Promise.all([
         API.get('stats'),
         API.get('transactions')
     ]);
+    console.log('[DEBUG] API Data:', { globalStats, txsSize: txs.length });
 
     const monthFilter = getMonthFilter();
     const filtered = txs.filter(t => t.fecha && t.fecha.startsWith(monthFilter));
@@ -34,12 +36,16 @@ async function updateStats(getMonthFilter) {
     const totalExpenses = document.getElementById('totalExpenses');
     const totalBalance = document.getElementById('totalBalance');
 
+    console.log('[DEBUG] Rendering:', { monthlyIncome, monthlyExpense, globalBalance: globalStats.balance });
+
     // Mensuales
     if (totalIncome) totalIncome.textContent = formatCurrency(monthlyIncome);
     if (totalExpenses) totalExpenses.textContent = formatCurrency(monthlyExpense);
 
     // Global (Arrastre histórico)
-    if (totalBalance) totalBalance.textContent = formatCurrency(globalStats.balance);
+    if (totalBalance) {
+        totalBalance.textContent = formatCurrency(globalStats.balance);
+    }
 }
 
 async function updateCharts(getMonthFilter) {
