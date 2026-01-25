@@ -104,3 +104,33 @@ Calcula totales al vuelo.
 ### Categorías
 **GET** `/api/categories`
 *   **Response 200**: `[ { "id": 1, "nombre": "Comida", "tipo": "gasto" }, ... ]`
+
+### Crear Categoría [NUEVO]
+**POST** `/api/categories`
+*   **Body**: `{ "nombre": "Gym", "tipo": "gasto" }`
+*   **Response 200**: `{ "id": 45, "success": true }`
+
+### Eliminar Categoría [NUEVO]
+**DELETE** `/api/categories/:id`
+*   **Response 200**: `{ "success": true }`
+
+---
+
+## 📉 Presupuestos [NUEVO]
+
+### Listar Presupuestos
+**GET** `/api/category-budgets`
+*   **Response 200**: `[ { "id": 1, "categoria": "Comida", "limite": 50000 }, ... ]`
+
+### Actualizar Presupuestos
+**POST** `/api/category-budgets`
+Actualiza o crea límites de gasto por categoría en lote.
+*   **Body**: 
+    ```json
+    [
+      { "categoria": "Comida", "limite": 60000 },
+      { "categoria": "Transporte", "limite": 20000 }
+    ]
+    ```
+*   **Response 200**: `{ "success": true }`
+
