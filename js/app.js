@@ -1,12 +1,12 @@
 /**
  * Saul-Finanzas Client (Modular Version)
  */
-import { API } from './core/api.js';
-import { initModalHandlers } from './components/modal.js';
-import { loadDashboard } from './views/dashboard.js';
-import { loadTransactionsView, startAddTransaction, saveTransaction } from './views/transactions.js';
-import { loadSavingsView, createEnvelope, openNewEnvelopeModal, closeEnvelopeModal, processFundUpdate, closeFundsModal, setFundMode } from './views/savings.js';
-import { loadCategoriesSettings, addCategory } from './views/settings.js';
+import { API } from './core/api.js?v=12.0';
+import { initModalHandlers } from './components/modal.js?v=12.0';
+import { loadDashboard } from './views/dashboard.js?v=12.0';
+import { loadTransactionsView, startAddTransaction, saveTransaction } from './views/transactions.js?v=12.0';
+import { loadSavingsView, createEnvelope, openNewEnvelopeModal, closeEnvelopeModal, processFundUpdate, closeFundsModal, setFundMode } from './views/savings.js?v=12.0';
+import { loadCategoriesSettings, addCategory } from './views/settings.js?v=12.0';
 
 // --- STATE ---
 let currentViewYear = new Date().getFullYear();
