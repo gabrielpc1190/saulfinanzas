@@ -1,12 +1,12 @@
 /**
  * Saul-Finanzas Client (Modular Version)
  */
-import { API } from './core/api.js?v=12.0';
-import { initModalHandlers } from './components/modal.js?v=12.0';
-import { loadDashboard } from './views/dashboard.js?v=12.0';
-import { loadTransactionsView, startAddTransaction, saveTransaction } from './views/transactions.js?v=12.0';
-import { loadSavingsView, createEnvelope, openNewEnvelopeModal, closeEnvelopeModal, processFundUpdate, closeFundsModal, setFundMode } from './views/savings.js?v=12.0';
-import { loadCategoriesSettings, addCategory } from './views/settings.js?v=12.0';
+import { API } from './core/api.js?v=12.2';
+import { initModalHandlers } from './components/modal.js?v=12.2';
+import { loadDashboard } from './views/dashboard.js?v=12.2';
+import { loadTransactionsView, startAddTransaction, saveTransaction } from './views/transactions.js?v=12.2';
+import { loadSavingsView, createEnvelope, openNewEnvelopeModal, closeEnvelopeModal, processFundUpdate, closeFundsModal, setFundMode } from './views/savings.js?v=12.2';
+import { loadCategoriesSettings, addCategory } from './views/settings.js?v=12.2';
 
 // --- STATE ---
 let currentViewYear = new Date().getFullYear();
@@ -83,6 +83,11 @@ async function initApp() {
         // Navigation Month
         window.prevMonth = prevMonth;
         window.nextMonth = nextMonth;
+
+        const prevBtn = document.getElementById('prevMonth');
+        const nextBtn = document.getElementById('nextMonth');
+        if (prevBtn) prevBtn.onclick = prevMonth;
+        if (nextBtn) nextBtn.onclick = nextMonth;
 
         // Mobile Menu
         initMobileMenu();
