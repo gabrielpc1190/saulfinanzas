@@ -1,5 +1,6 @@
 /**
- * Servidor API REST Nivel 2 (SQLite Server-Side)
+ * Servidor API REST Multi-Usuario Nivel 3 (SQLite Server-Side)
+ * Soporte para aislamiento de datos por usuario (Row-Level Security)
  */
 const http = require('http');
 const fs = require('fs');
@@ -12,7 +13,6 @@ const sqlite3 = require('sqlite3').verbose();
 const PORT = 3000;
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'finanzas.sqlite');
-const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 
 // --- Asegurar directorio data ---
@@ -22,54 +22,89 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new sqlite3.Database(DB_FILE);
 
 /**
- * Inicializa la estructura de la base de datos SQLite si no existe.
- * Crea tablas: transacciones, configuracion, categorias, presupuestos_categoria, sobres.
- * Inserta datos semilla si la tabla de categorías está vacía.
+ * Define las categorías por defecto para nuevos usuarios.
+ */
+const DEFAULT_CATEGORIES = [
+    { nombre: 'Comida', tipo: 'gasto' },
+    { nombre: 'Transporte', tipo: 'gasto' },
+    { nombre: 'Salario', tipo: 'ingreso' },
+    { nombre: 'Otros', tipo: 'gasto' }
+];
+
+/**
+ * Inicializa y migra la estructura de la base de datos.
  */
 function initDB() {
     db.serialize(() => {
+        // 1. Tabla de Usuarios
+        db.run(`CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )`);
+
+        // 2. Tablas de Negocio con user_id
         db.run(`CREATE TABLE IF NOT EXISTS transacciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 1,
             fecha TEXT, tipo TEXT, categoria TEXT, monto REAL, descripcion TEXT
         )`);
-        db.run(`CREATE TABLE IF NOT EXISTS configuracion (clave TEXT PRIMARY KEY, valor TEXT)`);
-        db.run(`CREATE TABLE IF NOT EXISTS categorias (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, tipo TEXT)`);
-        db.run(`CREATE TABLE IF NOT EXISTS presupuestos_categoria (id INTEGER PRIMARY KEY AUTOINCREMENT, categoria TEXT UNIQUE, limite REAL DEFAULT 0)`);
-        db.run(`CREATE TABLE IF NOT EXISTS sobres (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT UNIQUE, saldo REAL DEFAULT 0, icono TEXT)`);
 
-        // Datos iniciales si está vacía
-        db.get("SELECT count(*) as count FROM categorias", (err, row) => {
-            if (!row || row.count === 0) {
-                const stmt = db.prepare("INSERT INTO categorias (nombre, tipo) VALUES (?, ?)");
-                const cats = [['Comida', 'gasto'], ['Transporte', 'gasto'], ['Salario', 'ingreso'], ['Otros', 'gasto']];
-                cats.forEach(c => stmt.run(c));
-                stmt.finalize();
-            }
+        db.run(`CREATE TABLE IF NOT EXISTS categorias (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 1,
+            nombre TEXT, tipo TEXT
+        )`);
+
+        db.run(`CREATE TABLE IF NOT EXISTS presupuestos_categoria (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 1,
+            categoria TEXT, 
+            limite REAL DEFAULT 0,
+            UNIQUE(user_id, categoria)
+        )`);
+
+        db.run(`CREATE TABLE IF NOT EXISTS sobres (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 1,
+            nombre TEXT, 
+            saldo REAL DEFAULT 0, 
+            icono TEXT,
+            UNIQUE(user_id, nombre)
+        )`);
+
+        // Migración: Asegurar columnas user_id en tablas existentes (si vienen de v2)
+        const tables = ['transacciones', 'categorias', 'presupuestos_categoria', 'sobres'];
+        tables.forEach(table => {
+            db.all(`PRAGMA table_info(${table})`, (err, columns) => {
+                if (!columns.some(c => c.name === 'user_id')) {
+                    console.log(`[DB] Migrando tabla ${table} a multi-usuario...`);
+                    db.run(`ALTER TABLE ${table} ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1`);
+                }
+            });
         });
+
+        // Crear usuario admin default si no existe (Migración de users.json si es necesario)
+        // Nota: Si ya existía lógica auth anterior, asumimos que ID 1 es admin.
+        const adminPass = process.env.ADMIN_PASSWORD || 'Saul123!';
+        const hash = bcrypt.hashSync(adminPass, 10);
+        db.run(`INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (1, 'admin', ?)`, [hash]);
     });
-    console.log('[DB] Base de datos SQLite inicializada en servidor');
+    console.log('[DB] Base de datos Multi-Usuario inicializada');
 }
 initDB();
 
-// --- Auth System (Users & Sessions) ---
-const DEFAULT_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin123!';
-let users = {};
+// --- Auth System (Sessions Memory) ---
 let sessions = {};
-
-if (fs.existsSync(USERS_FILE)) users = JSON.parse(fs.readFileSync(USERS_FILE));
-else {
-    users = { admin: { username: 'admin', passwordHash: bcrypt.hashSync(DEFAULT_PASSWORD, 10) } };
-    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+if (fs.existsSync(SESSIONS_FILE)) {
+    try { sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE)); } catch (e) { sessions = {}; }
 }
-
-if (fs.existsSync(SESSIONS_FILE)) sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE));
-
 function saveSessions() { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2)); }
 
 /**
- * Recupera la sesión activa basada en la cookie 'auth_token'.
- * @param {http.IncomingMessage} req - Objeto de petición HTTP.
- * @returns {Object|null} Objeto de sesión { username, created } o null si no es válida.
+ * Recupera la sesión activa.
+ * @returns {Object|null} { userId, username, created }
  */
 function getSession(req) {
     const cookies = cookie.parse(req.headers.cookie || '');
@@ -77,14 +112,9 @@ function getSession(req) {
     return (token && sessions[token]) ? sessions[token] : null;
 }
 
-// --- Helpers ---
+// --- Helpers HTTP ---
 const MIME_TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' };
 
-/**
- * Helper para parsear el cuerpo de una petición como JSON.
- * @param {http.IncomingMessage} req 
- * @returns {Promise<Object>} Promesa que resuelve con el objeto parseado o vacío.
- */
 function parseJSON(req) {
     return new Promise(resolve => {
         let body = '';
@@ -107,27 +137,30 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('X-XSS-Protection', '1; mode=block');
 
-    // 1. Validar Sesión para API (excepto login)
     const url = req.url.split('?')[0];
     const method = req.method;
 
-    // Rutas públicas de API
+    // --- PUBLIC ENDPOINTS ---
     if (url === '/api/login' && method === 'POST') return handleLogin(req, res);
 
-    // Rutas protegidas de API
+    // Registro público deshabilitado por seguridad (Usar CLI: node create_user.js)
+    if (url === '/api/register') {
+        return sendJSON(res, { error: 'Registro público deshabilitado. Contacte al administrador.' }, 403);
+    }
+
+    // --- PROTECTED ENDPOINTS ---
     if (url.startsWith('/api/')) {
         const session = getSession(req);
         if (!session) return sendJSON(res, { error: 'Unauthorized' }, 401);
+        const userId = session.userId;
 
-        // API Router
-        if (url === '/api/me') return sendJSON(res, { username: session.username });
+        if (url === '/api/me') return sendJSON(res, { username: session.username, id: userId });
         if (url === '/api/logout') return handleLogout(req, res);
 
         // --- TRANSACTIONS ---
         if (url === '/api/transactions') {
             if (method === 'GET') {
-                // Filtros mes/año
-                db.all("SELECT * FROM transacciones ORDER BY fecha DESC, id DESC", (err, rows) => {
+                db.all("SELECT * FROM transacciones WHERE user_id = ? ORDER BY fecha DESC, id DESC", [userId], (err, rows) => {
                     if (err) return sendJSON(res, { error: err.message }, 500);
                     sendJSON(res, rows);
                 });
@@ -136,8 +169,8 @@ const server = http.createServer(async (req, res) => {
             if (method === 'POST') {
                 const data = await parseJSON(req);
                 const { fecha, tipo, categoria, monto, descripcion } = data;
-                db.run("INSERT INTO transacciones (fecha, tipo, categoria, monto, descripcion) VALUES (?,?,?,?,?)",
-                    [fecha, tipo, categoria, monto, descripcion],
+                db.run("INSERT INTO transacciones (user_id, fecha, tipo, categoria, monto, descripcion) VALUES (?,?,?,?,?,?)",
+                    [userId, fecha, tipo, categoria, monto, descripcion],
                     function (err) {
                         if (err) return sendJSON(res, { error: err.message }, 500);
                         sendJSON(res, { id: this.lastID, success: true });
@@ -149,7 +182,7 @@ const server = http.createServer(async (req, res) => {
 
         if (url.startsWith('/api/transactions/') && method === 'DELETE') {
             const id = url.split('/').pop();
-            db.run("DELETE FROM transacciones WHERE id = ?", [id], (err) => {
+            db.run("DELETE FROM transacciones WHERE id = ? AND user_id = ?", [id, userId], (err) => {
                 if (err) return sendJSON(res, { error: err.message }, 500);
                 sendJSON(res, { success: true });
             });
@@ -158,7 +191,7 @@ const server = http.createServer(async (req, res) => {
 
         // --- STATS / DASHBOARD ---
         if (url === '/api/stats') {
-            db.all("SELECT tipo, SUM(monto) as total FROM transacciones GROUP BY tipo", (err, rows) => {
+            db.all("SELECT tipo, SUM(monto) as total FROM transacciones WHERE user_id = ? GROUP BY tipo", [userId], (err, rows) => {
                 let income = 0, expense = 0;
                 rows.forEach(r => {
                     if (r.tipo === 'ingreso') income = r.total;
@@ -170,10 +203,9 @@ const server = http.createServer(async (req, res) => {
         }
 
         // --- CATEGORIES ---
-        // --- CATEGORIES ---
         if (url === '/api/categories') {
             if (method === 'GET') {
-                db.all("SELECT * FROM categorias ORDER BY nombre", (err, rows) => {
+                db.all("SELECT * FROM categorias WHERE user_id = ? ORDER BY nombre", [userId], (err, rows) => {
                     if (err) return sendJSON(res, { error: err.message }, 500);
                     sendJSON(res, rows);
                 });
@@ -181,29 +213,27 @@ const server = http.createServer(async (req, res) => {
             }
             if (method === 'POST') {
                 const data = await parseJSON(req);
-                if (!data.nombre || !data.tipo) return sendJSON(res, { error: 'Datos incompletos' }, 400);
-                db.run("INSERT INTO categorias (nombre, tipo) VALUES (?, ?)", [data.nombre, data.tipo], function (err) {
-                    if (err) return sendJSON(res, { error: err.message }, 500);
-                    sendJSON(res, { id: this.lastID, success: true });
-                });
+                db.run("INSERT INTO categorias (user_id, nombre, tipo) VALUES (?, ?, ?)",
+                    [userId, data.nombre, data.tipo], function (err) {
+                        if (err) return sendJSON(res, { error: err.message }, 500);
+                        sendJSON(res, { id: this.lastID, success: true });
+                    });
                 return;
             }
         }
-
         if (url.startsWith('/api/categories/') && method === 'DELETE') {
             const id = url.split('/').pop();
-            db.run("DELETE FROM categorias WHERE id = ?", [id], function (err) {
+            db.run("DELETE FROM categorias WHERE id = ? AND user_id = ?", [id, userId], function (err) {
                 if (err) return sendJSON(res, { error: err.message }, 500);
                 sendJSON(res, { success: true });
             });
             return;
         }
 
-
         // --- CATEGORY BUDGETS ---
         if (url === '/api/category-budgets') {
             if (method === 'GET') {
-                db.all("SELECT * FROM presupuestos_categoria", (err, rows) => {
+                db.all("SELECT * FROM presupuestos_categoria WHERE user_id = ?", [userId], (err, rows) => {
                     if (err) return sendJSON(res, { error: err.message }, 500);
                     sendJSON(res, rows || []);
                 });
@@ -211,12 +241,10 @@ const server = http.createServer(async (req, res) => {
             }
             if (method === 'POST') {
                 const data = await parseJSON(req);
-                if (!Array.isArray(data)) return sendJSON(res, { error: 'Se espera un array' }, 400);
-
-                const stmt = db.prepare("INSERT OR REPLACE INTO presupuestos_categoria (categoria, limite) VALUES (?, ?)");
+                const stmt = db.prepare("INSERT OR REPLACE INTO presupuestos_categoria (user_id, categoria, limite) VALUES (?, ?, ?)");
                 for (const item of data) {
                     if (item.categoria && typeof item.limite === 'number') {
-                        stmt.run([item.categoria, item.limite]);
+                        stmt.run([userId, item.categoria, item.limite]);
                     }
                 }
                 stmt.finalize((err) => {
@@ -227,11 +255,10 @@ const server = http.createServer(async (req, res) => {
             }
         }
 
-
         // --- SAVINGS (SOBRES) ---
         if (url === '/api/savings') {
             if (method === 'GET') {
-                db.all("SELECT * FROM sobres ORDER BY nombre", (err, rows) => {
+                db.all("SELECT * FROM sobres WHERE user_id = ? ORDER BY nombre", [userId], (err, rows) => {
                     if (err) return sendJSON(res, { error: err.message }, 500);
                     sendJSON(res, rows || []);
                 });
@@ -239,17 +266,11 @@ const server = http.createServer(async (req, res) => {
             }
             if (method === 'POST') {
                 const data = await parseJSON(req);
-                const { nombre, icono } = data;
-                if (!nombre) return sendJSON(res, { error: 'Nombre requerido' }, 400);
-
-                // Crear sobre con saldo 0 (no se permite saldo inicial para mantener integridad contable)
-                db.run("INSERT INTO sobres (nombre, saldo, icono) VALUES (?, 0, ?)",
-                    [nombre, icono || '💰'],
+                db.run("INSERT INTO sobres (user_id, nombre, saldo, icono) VALUES (?, ?, 0, ?)",
+                    [userId, data.nombre, data.icono || '💰'],
                     function (err) {
                         if (err) {
-                            if (err.message.includes('UNIQUE')) {
-                                return sendJSON(res, { error: 'Ya existe un sobre con ese nombre' }, 400);
-                            }
+                            if (err.message.includes('UNIQUE')) return sendJSON(res, { error: 'Ya existe un sobre con ese nombre' }, 400);
                             return sendJSON(res, { error: err.message }, 500);
                         }
                         sendJSON(res, { id: this.lastID, success: true });
@@ -259,20 +280,18 @@ const server = http.createServer(async (req, res) => {
             }
         }
 
-        // Operaciones en un sobre específico
+        // Operaciones Sobre Específico
         const savingsMatch = url.match(/^\/api\/savings\/(\d+)(\/(\w+))?$/);
         if (savingsMatch) {
             const envelopeId = savingsMatch[1];
-            const action = savingsMatch[3]; // deposit, withdraw, o undefined
+            const action = savingsMatch[3];
 
             if (method === 'DELETE' && !action) {
-                // Eliminar sobre (solo si saldo es 0)
-                db.get("SELECT saldo FROM sobres WHERE id = ?", [envelopeId], (err, row) => {
-                    if (err) return sendJSON(res, { error: err.message }, 500);
+                db.get("SELECT saldo FROM sobres WHERE id = ? AND user_id = ?", [envelopeId, userId], (err, row) => {
                     if (!row) return sendJSON(res, { error: 'Sobre no encontrado' }, 404);
-                    if (row.saldo > 0) return sendJSON(res, { error: 'No se puede eliminar un sobre con saldo. Retira el dinero primero.' }, 400);
+                    if (row.saldo > 0) return sendJSON(res, { error: 'No se puede eliminar un sobre con saldo' }, 400);
 
-                    db.run("DELETE FROM sobres WHERE id = ?", [envelopeId], (err) => {
+                    db.run("DELETE FROM sobres WHERE id = ? AND user_id = ?", [envelopeId, userId], (err) => {
                         if (err) return sendJSON(res, { error: err.message }, 500);
                         sendJSON(res, { success: true });
                     });
@@ -280,71 +299,28 @@ const server = http.createServer(async (req, res) => {
                 return;
             }
 
-            if (method === 'PUT' && action === 'deposit') {
+            if (method === 'PUT' && (action === 'deposit' || action === 'withdraw')) {
                 const data = await parseJSON(req);
                 const monto = parseFloat(data.monto);
                 if (!monto || monto <= 0) return sendJSON(res, { error: 'Monto inválido' }, 400);
 
-                // 1. Validar fondos suficientes en Balance General
-                db.get("SELECT SUM(CASE WHEN tipo = 'ingreso' THEN monto WHEN tipo = 'gasto' THEN -monto ELSE 0 END) as total FROM transacciones", (err, row) => {
-                    if (err) return sendJSON(res, { error: err.message }, 500);
-
-                    const balanceGeneral = (row && row.total) || 0;
-                    if (balanceGeneral < monto) {
-                        return sendJSON(res, { error: `Fondos insuficientes. Disponible: ₡${balanceGeneral.toLocaleString('es-CR')}` }, 400);
-                    }
-
-                    // 2. Obtener nombre del sobre
-                    db.get("SELECT nombre FROM sobres WHERE id = ?", [envelopeId], (err, envelope) => {
-                        if (err) return sendJSON(res, { error: err.message }, 500);
-                        if (!envelope) return sendJSON(res, { error: 'Sobre no encontrado' }, 404);
-
-                        // 3. Actualizar saldo del sobre
-                        db.run("UPDATE sobres SET saldo = saldo + ? WHERE id = ?", [monto, envelopeId], function (err) {
-                            if (err) return sendJSON(res, { error: err.message }, 500);
-
-                            // 4. Registrar como GASTO (dinero sale del balance disponible al ahorro)
-                            const fecha = new Date().toISOString().split('T')[0];
-                            db.run(
-                                "INSERT INTO transacciones (fecha, tipo, categoria, monto, descripcion) VALUES (?, ?, ?, ?, ?)",
-                                [fecha, 'gasto', 'Ahorro', monto, `Depósito a sobre: ${envelope.nombre}`],
-                                function (err) {
-                                    if (err) return sendJSON(res, { error: err.message }, 500);
-                                    sendJSON(res, { success: true, transactionId: this.lastID });
-                                }
-                            );
-                        });
-                    });
-                });
-                return;
-            }
-
-            if (method === 'PUT' && action === 'withdraw') {
-                const data = await parseJSON(req);
-                const monto = parseFloat(data.monto);
-                if (!monto || monto <= 0) return sendJSON(res, { error: 'Monto inválido' }, 400);
-
-                // 1. Verificar saldo suficiente
-                db.get("SELECT nombre, saldo FROM sobres WHERE id = ?", [envelopeId], (err, envelope) => {
-                    if (err) return sendJSON(res, { error: err.message }, 500);
+                // Validar propiedad del sobre
+                db.get("SELECT * FROM sobres WHERE id = ? AND user_id = ?", [envelopeId, userId], (err, envelope) => {
                     if (!envelope) return sendJSON(res, { error: 'Sobre no encontrado' }, 404);
-                    if (envelope.saldo < monto) return sendJSON(res, { error: 'Saldo insuficiente en el sobre' }, 400);
 
-                    // 2. Actualizar saldo del sobre
-                    db.run("UPDATE sobres SET saldo = saldo - ? WHERE id = ?", [monto, envelopeId], function (err) {
-                        if (err) return sendJSON(res, { error: err.message }, 500);
+                    if (action === 'deposit') {
+                        // Verificar fondos globales
+                        db.get("SELECT SUM(CASE WHEN tipo='ingreso' THEN monto ELSE -monto END) as total FROM transacciones WHERE user_id = ?", [userId], (err, row) => {
+                            const balance = (row && row.total) || 0;
+                            if (balance < monto) return sendJSON(res, { error: 'Fondos insuficientes' }, 400);
 
-                        // 3. Registrar como INGRESO (dinero vuelve al balance disponible)
-                        const fecha = new Date().toISOString().split('T')[0];
-                        db.run(
-                            "INSERT INTO transacciones (fecha, tipo, categoria, monto, descripcion) VALUES (?, ?, ?, ?, ?)",
-                            [fecha, 'ingreso', 'Retiro Ahorro', monto, `Retiro de sobre: ${envelope.nombre}`],
-                            function (err) {
-                                if (err) return sendJSON(res, { error: err.message }, 500);
-                                sendJSON(res, { success: true, transactionId: this.lastID });
-                            }
-                        );
-                    });
+                            // Ejecutar movimiento
+                            executeEnvelopeTransaction(userId, envelope, monto, 'deposit', res);
+                        });
+                    } else { // withdraw
+                        if (envelope.saldo < monto) return sendJSON(res, { error: 'Saldo insuficiente en sobre' }, 400);
+                        executeEnvelopeTransaction(userId, envelope, monto, 'withdraw', res);
+                    }
                 });
                 return;
             }
@@ -353,14 +329,11 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, { error: 'Not Found' }, 404);
     }
 
-    // 2. Archivos Estáticos
+    // --- STATIC FILES ---
     let filePath = url === '/' ? '/index.html' : url;
     if ((filePath === '/index.html' || filePath === '/') && !getSession(req)) {
         filePath = '/login.html';
     }
-
-    // Cache busting para app.js y styles.css: servir el archivo real ignorando query params
-    // (ya se maneja porque url.split('?')[0] arriba limpia la ruta)
 
     const realPath = path.join(__dirname, filePath);
     if (!realPath.startsWith(__dirname)) return (res.writeHead(403), res.end());
@@ -369,44 +342,52 @@ const server = http.createServer(async (req, res) => {
         if (err) return (res.writeHead(404), res.end('Not Found'));
         const ext = path.extname(realPath);
         const headers = { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' };
-
-        // Evitar caché agresivo en archivos JS y CSS
-        if (ext === '.js' || ext === '.css') {
-            headers['Cache-Control'] = 'no-cache, must-revalidate';
-        }
-
+        if (ext === '.js' || ext === '.css') headers['Cache-Control'] = 'no-cache, must-revalidate';
         res.writeHead(200, headers);
         res.end(content);
     });
 });
 
-// --- Handlers Auth ---
+function executeEnvelopeTransaction(userId, envelope, monto, type, res) {
+    const isDeposit = type === 'deposit';
+    const sqlUpdate = `UPDATE sobres SET saldo = saldo ${isDeposit ? '+' : '-'} ? WHERE id = ?`;
 
-/**
- * Maneja el inicio de sesión de usuarios.
- * Verifica credenciales contra hash bcrypt y emite cookie httpOnly.
- * @param {http.IncomingMessage} req 
- * @param {http.ServerResponse} res 
- */
-async function handleLogin(req, res) {
-    const { username, password } = await parseJSON(req);
-    const user = users[username];
-    if (user && bcrypt.compareSync(password, user.passwordHash)) {
-        const token = crypto.randomUUID();
-        sessions[token] = { username, created: Date.now() };
-        saveSessions();
-        res.setHeader('Set-Cookie', cookie.serialize('auth_token', token, { httpOnly: true, path: '/' }));
-        sendJSON(res, { success: true });
-    } else {
-        sendJSON(res, { error: 'Invalid credentials' }, 401);
-    }
+    db.run(sqlUpdate, [monto, envelope.id], function (err) {
+        if (err) return sendJSON(res, { error: err.message }, 500);
+
+        const fecha = new Date().toISOString().split('T')[0];
+        const txType = isDeposit ? 'gasto' : 'ingreso'; // Depósito al sobre es gasto del balance disponible
+        const cat = isDeposit ? 'Ahorro' : 'Retiro Ahorro';
+        const desc = isDeposit ? `Depósito a sobre: ${envelope.nombre}` : `Retiro de sobre: ${envelope.nombre}`;
+
+        db.run("INSERT INTO transacciones (user_id, fecha, tipo, categoria, monto, descripcion) VALUES (?,?,?,?,?,?)",
+            [userId, fecha, txType, cat, monto, desc],
+            function (err) {
+                if (err) return sendJSON(res, { error: err.message }, 500);
+                sendJSON(res, { success: true });
+            }
+        );
+    });
 }
 
-/**
- * Cierra la sesión activa y elimina la cookie de autenticación.
- * @param {http.IncomingMessage} req 
- * @param {http.ServerResponse} res 
- */
+// --- Auth Handler (DB Based) ---
+async function handleLogin(req, res) {
+    const { username, password } = await parseJSON(req);
+    db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
+        if (err) return sendJSON(res, { error: err.message }, 500);
+
+        if (user && bcrypt.compareSync(password, user.password_hash)) {
+            const token = crypto.randomUUID();
+            sessions[token] = { userId: user.id, username: user.username, created: Date.now() }; // Store userId
+            saveSessions();
+            res.setHeader('Set-Cookie', cookie.serialize('auth_token', token, { httpOnly: true, path: '/' }));
+            sendJSON(res, { success: true });
+        } else {
+            sendJSON(res, { error: 'Credenciales inválidas' }, 401);
+        }
+    });
+}
+
 function handleLogout(req, res) {
     const cookies = cookie.parse(req.headers.cookie || '');
     if (cookies.auth_token) {
@@ -417,4 +398,4 @@ function handleLogout(req, res) {
     sendJSON(res, { success: true });
 }
 
-server.listen(PORT, '0.0.0.0', () => console.log(`Server API Nivel 2 running on port ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`Server Multi-User running on port ${PORT}`));

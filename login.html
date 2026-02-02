@@ -164,6 +164,7 @@
 
         <div id="msgBox" class="msg-box"></div>
 
+        <!-- Registro deshabilitado: Solo Login -->
         <form id="loginForm">
             <div class="form-group">
                 <label>Usuario</label>
@@ -208,8 +209,7 @@
                 const data = await res.json();
 
                 if (res.ok && data.success) {
-                    // Redirección explícita al dashboard
-                    window.location.href = data.redirect || '/';
+                    window.location.href = '/';
                 } else {
                     showError(data.error || 'Error de autenticación');
                     submitBtn.disabled = false;
@@ -225,6 +225,8 @@
         function showError(msg) {
             msgBox.textContent = msg;
             msgBox.style.display = 'block';
+            msgBox.style.color = 'var(--error)';
+            msgBox.style.background = 'rgba(239, 68, 68, 0.15)';
         }
     </script>
 </body>
